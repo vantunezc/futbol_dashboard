@@ -133,32 +133,107 @@ with tab_xg:
         'mi_xG': '{:.3f}',
         'sb_xG': '{:.3f}',
         'delta_xG': '{:+.3f}'
-    }), use_container_width=True)
+    }), width='stretch')
 
 # =========================================================
-# PESTAÑA 3: RADAR DE SCOUTING
+# PESTAÑA 3: RADAR DE SCOUTING (PERCENTILES REALES PREMIER LEAGUE)
 # =========================================================
 with tab_radar:
-    st.subheader("Perfil Multidimensional de Rendimiento (Percentiles/Métricas p90)")
-    
-    parametros = ['Goles p90', 'xG p90', 'Asistencias p90', 'Pases Clave p90', 'Regates p90', 'Duelos Ganados %']
-    min_valores = [0.0, 0.0, 0.0, 0.5, 0.5, 30.0]
-    max_valores = [0.8, 0.7, 0.6, 4.0, 5.0, 75.0]
-    
-    perfil_a = [0.48, 0.42, 0.30, 2.9, 3.4, 55.0]
-    perfil_b = [0.18, 0.22, 0.52, 3.8, 1.7, 69.0]
-    
-    radar = Radar(params=parametros, min_range=min_valores, max_range=max_valores, num_rings=4)
-    fig_r, ax_r = radar.setup_axis(figsize=(7, 7), facecolor='#12151a')
-    radar.draw_circles(ax=ax_r, facecolor='#1c2128', edgecolor='#61afef', lw=1.2, alpha=0.35)
-    radar.draw_range_labels(ax=ax_r, color='#8b949e', fontsize=9)
-    radar.draw_param_labels(ax=ax_r, color='white', fontsize=10, fontweight='bold', offset=1)
-    
-    radar.draw_radar(perfil_a, ax=ax_r, kwargs_radar={'facecolor': '#00bcd4', 'alpha': 0.45, 'edgecolor': '#00bcd4', 'lw': 2})
-    radar.draw_radar(perfil_b, ax=ax_r, kwargs_radar={'facecolor': '#ff7043', 'alpha': 0.45, 'edgecolor': '#ff7043', 'lw': 2})
-    
-    st.pyplot(fig_r)
-    st.markdown("🔵 **Extremo / Atacante Directo** vs 🟠 **Volante Mixto / Creador**")
+    st.subheader("Perfil Multidimensional y Comparativa por Percentiles (0 a 100)")
+    st.caption("Comparación relativa contra todos los jugadores de la Premier League con al menos 270 minutos jugados.")
+
+    from scipy.stats import percentileofscore
+
+    # Cargar dataset local de la liga
+    @st.cache_data
+    def cargar_datos_scouting():
+        try:
+            return pd.read_csv("fbref_premier_league.csv")
+        except FileNotFoundError:
+            return None
+
+    df_liga = cargar_datos_scouting()
+
+    if df_liga is None or df_liga.empty:
+        st.warning("⚠️ No se encontró el archivo 'fbref_premier_league.csv'. Ejecuta 'descargar_liga.py' para generarlo.")
+    else:
+        # Métricas p90 a evaluar en el radar
+        metricas_radar = ['Goles_p90', 'xG_p90', 'Asistencias_p90', 'xA_p90']
+        metricas_etiquetas = ['Goles p90', 'xG p90', 'Asistencias p90', 'xA p90']
+        
+        # Selectores de jugadores
+        lista_jugadores = sorted(df_liga['Jugador'].unique())
+        
+        c_sel1, c_sel2 = st.columns(2)
+        with c_sel1:
+            # Jugador 1 por defecto (si existe)
+            idx_default1 = 0
+            jugador_1 = st.selectbox("Seleccionar Jugador 1 (Azul):", lista_jugadores, index=idx_default1)
+        with c_sel2:
+            # Jugador 2 por defecto
+            idx_default2 = min(1, len(lista_jugadores) - 1)
+            jugador_2 = st.selectbox("Seleccionar Jugador 2 (Naranja):", lista_jugadores, index=idx_default2)
+
+        # Función para calcular el percentil (0-100) de un jugador en cada métrica
+        def obtener_percentiles(nombre):
+            datos_j = df_liga[df_liga['Jugador'] == nombre].iloc[0]
+            percentiles = []
+            for col in metricas_radar:
+                pct = percentileofscore(df_liga[col], datos_j[col], kind='rank')
+                percentiles.append(round(pct, 1))
+            return percentiles, datos_j
+
+        pct_j1, fila_j1 = obtener_percentiles(jugador_1)
+        pct_j2, fila_j2 = obtener_percentiles(jugador_2)
+
+        # Métricas rápidas de los seleccionados
+        col_m1, col_m2 = st.columns(2)
+        with col_m1:
+            st.markdown(f"**🔵 {jugador_1}** ({fila_j1['Equipo']}) — Minutos: {int(fila_j1['minutes'])}")
+        with col_m2:
+            st.markdown(f"**🟠 {jugador_2}** ({fila_j2['Equipo']}) — Minutos: {int(fila_j2['minutes'])}")
+
+        # Configuración del radar en mplsoccer (escala universal de percentiles: 0 a 100)
+        min_pct = [0.0] * len(metricas_radar)
+        max_pct = [100.0] * len(metricas_radar)
+
+        radar = Radar(
+            params=metricas_etiquetas,
+            min_range=min_pct,
+            max_range=max_pct,
+            num_rings=4,
+            ring_width=1,
+            center_circle_radius=1
+        )
+
+        fig_r, ax_r = radar.setup_axis(figsize=(7, 7), facecolor='#12151a')
+        radar.draw_circles(ax=ax_r, facecolor='#1c2128', edgecolor='#61afef', lw=1.2, alpha=0.35)
+        radar.draw_range_labels(ax=ax_r, color='#8b949e', fontsize=9)
+        radar.draw_param_labels(ax=ax_r, color='white', fontsize=11, fontweight='bold', offset=1)
+
+        # Dibujar silueta Jugador 1 (Azul cian)
+        radar.draw_radar(
+            pct_j1, ax=ax_r,
+            kwargs_radar={'facecolor': '#00bcd4', 'alpha': 0.45, 'edgecolor': '#00bcd4', 'lw': 2}
+        )
+
+        # Dibujar silueta Jugador 2 (Naranja)
+        radar.draw_radar(
+            pct_j2, ax=ax_r,
+            kwargs_radar={'facecolor': '#ff7043', 'alpha': 0.45, 'edgecolor': '#ff7043', 'lw': 2}
+        )
+
+        st.pyplot(fig_r)
+
+        # Tabla de percentiles detallada
+        df_pct_resumen = pd.DataFrame({
+            'Métrica': metricas_etiquetas,
+            f'{jugador_1} (Valor Real)': [fila_j1[m] for m in metricas_radar],
+            f'{jugador_1} (Percentil)': [f"{p}%" for p in pct_j1],
+            f'{jugador_2} (Valor Real)': [fila_j2[m] for m in metricas_radar],
+            f'{jugador_2} (Percentil)': [f"{p}%" for p in pct_j2],
+        })
+        st.dataframe(df_pct_resumen, width='stretch')
 
 # =========================================================
 # PESTAÑA 4: RED DE PASES TÁCTICA (PASSING NETWORK)

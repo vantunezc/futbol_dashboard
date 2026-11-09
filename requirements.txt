@@ -6,3 +6,4 @@ mplsoccer
 requests
 scikit-learn
 beautifulsoup4
+scipy
