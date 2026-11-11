@@ -5,5 +5,5 @@ matplotlib
 mplsoccer
 requests
 scikit-learn
-beautifulsoup4
 scipy
+beautifulsoup4

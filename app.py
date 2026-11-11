@@ -6,6 +6,8 @@ import math
 import matplotlib.pyplot as plt
 from mplsoccer import Pitch, Radar
 from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics.pairwise import cosine_similarity
 
 # ---------------------------------------------------------
 # 1. CONFIGURACIÓN GENERAL DE LA PLATAFORMA
@@ -36,11 +38,14 @@ df_eventos = cargar_dataset_partido()
 # ---------------------------------------------------------
 # 3. PESTAÑAS PRINCIPALES DEL DASHBOARD
 # ---------------------------------------------------------
-tab_tiros, tab_xg, tab_radar, tab_red = st.tabs([
+# Reemplaza la línea anterior de st.tabs por esta:
+tab_tiros, tab_xg, tab_radar, tab_red, tab_xt, tab_clusters = st.tabs([
     "🎯 Mapa de Tiros Espacial",
     "📈 Comparativa de Modelos xG",
     "📊 Radar Multidimensional (Scouting)",
-    "🕸️ Red de Pases Táctica"
+    "🕸️ Red de Pases Táctica",
+    "⚡ Amenaza Esperada (xT)",
+    "🔍 Arquetipos & Sustitutos (K-Means)"
 ])
 
 # =========================================================
@@ -359,7 +364,7 @@ with tab_xt:
     st.dataframe(rk_xt.rename(columns={'player.name': 'Jugador', 'team.name': 'Equipo'}).style.format({'xT_Total': '{:.3f}'}), use_container_width=True)
 
 # =========================================================
-# PESTAÑA 6: CLUSTERING Y SUSTITUTOS
+# PESTAÑA 6: CLUSTERING Y SUSTITUTOS (CORREGIDO)
 # =========================================================
 with tab_clusters:
     st.subheader("Buscador de Sustitutos y Arquetipos (Machine Learning)")
@@ -369,23 +374,37 @@ with tab_clusters:
         df_scout = pd.DataFrame()
         
     if df_scout.empty:
-        st.warning("Ejecuta 'python scraping_fbref.py' para contar con el dataset de la Premier League.")
+        st.warning("⚠️ No se encontró el archivo 'fbref_premier_league.csv'.")
     else:
         from sklearn.preprocessing import StandardScaler
         from sklearn.metrics.pairwise import cosine_similarity
         
+        # Detectar columnas numéricas normalizadas disponibles (_p90)
         cols_metricas = [c for c in df_scout.columns if '_p90' in c]
+        
         if cols_metricas:
             X_scout = StandardScaler().fit_transform(df_scout[cols_metricas].fillna(0))
             
-            jugador_buscar = st.selectbox("Seleccionar Jugador de Referencia:", sorted(df_scout['Jugador'].unique()))
+            lista_jugadores = sorted(df_scout['Jugador'].dropna().unique())
+            jugador_buscar = st.selectbox("Seleccionar Jugador de Referencia:", lista_jugadores)
             
             idx_obj = df_scout[df_scout['Jugador'] == jugador_buscar].index[0]
             sims = cosine_similarity(X_scout[df_scout.index.get_loc(idx_obj)].reshape(1, -1), X_scout)[0]
             
             df_scout['Similitud Táctica %'] = (sims * 100).round(1)
-            sustitutos = df_scout[df_scout['Jugador'] != jugador_buscar].sort_values(by='Similitud Táctica %', ascending=False)
+            sustitutos = df_scout[df_scout['Jugador'] != jugador_buscar].sort_values(
+                by='Similitud Táctica %', ascending=False
+            )
             
-            st.write(f"Jugadores estadísticamente más parecidos a **{jugador_buscar}**:")
-            cols_mostrar = ['Jugador', 'Equipo', 'Rol', 'Similitud Táctica %'] + cols_metricas
-            st.dataframe(sustitutos[cols_mostrar].head(5), use_container_width=True)
+            st.markdown(f"Jugadores con métricas estadísticas más afines a **{jugador_buscar}**:")
+            
+            # Construir lista de columnas verificando qué existe en el CSV
+            cols_base = ['Jugador', 'Equipo']
+            if 'Rol' in df_scout.columns:
+                cols_base.append('Rol')
+            cols_mostrar = cols_base + ['Similitud Táctica %'] + cols_metricas
+            
+            # Mostrar tabla adaptada
+            st.dataframe(sustitutos[cols_mostrar].head(5), width='stretch')
+        else:
+            st.warning("No se encontraron columnas normalizadas con sufijo '_p90' en el archivo.")
