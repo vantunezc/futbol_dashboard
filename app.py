@@ -302,3 +302,90 @@ with tab_red:
         pitch_red.annotate(apellido, xy=(fila['x_media'], fila['y_media'] - 2.5), c='white', va='center', ha='center', size=9, weight='bold', ax=ax_red)
         
     st.pyplot(fig_red)
+
+    # Actualiza la declaración de pestañas al inicio:
+# tab_tiros, tab_xg, tab_radar, tab_red, tab_xt, tab_clusters = st.tabs([
+#     "🎯 Mapa de Tiros Espacial",
+#     "📈 Comparativa de Modelos xG",
+#     "📊 Radar Multidimensional (Scouting)",
+#     "🕸️ Red de Pases Táctica",
+#     "⚡ Amenaza Esperada (xT)",
+#     "🔍 Arquetipos & Sustitutos (K-Means)"
+# ])
+
+# =========================================================
+# PESTAÑA 5: AMENAZA ESPERADA (xT)
+# =========================================================
+with tab_xt:
+    st.subheader("Valoración de Acciones Ofensivas: Expected Threat (xT)")
+    st.caption("Cuantificación del peligro generado por pases progresivos hacia el último tercio")
+    
+    # Matriz 12x8
+    XT_GRID = np.array([
+        [0.001, 0.001, 0.002, 0.003, 0.005, 0.008, 0.012, 0.018, 0.026, 0.038, 0.058, 0.080],
+        [0.001, 0.001, 0.002, 0.003, 0.006, 0.009, 0.014, 0.021, 0.031, 0.048, 0.082, 0.125],
+        [0.001, 0.002, 0.003, 0.004, 0.007, 0.011, 0.017, 0.026, 0.041, 0.072, 0.155, 0.250],
+        [0.001, 0.002, 0.003, 0.005, 0.008, 0.012, 0.019, 0.030, 0.052, 0.105, 0.240, 0.380],
+        [0.001, 0.002, 0.003, 0.005, 0.008, 0.012, 0.019, 0.030, 0.052, 0.105, 0.240, 0.380],
+        [0.001, 0.002, 0.003, 0.004, 0.007, 0.011, 0.017, 0.026, 0.041, 0.072, 0.155, 0.250],
+        [0.001, 0.001, 0.002, 0.003, 0.006, 0.009, 0.014, 0.021, 0.031, 0.048, 0.082, 0.125],
+        [0.001, 0.001, 0.002, 0.003, 0.005, 0.008, 0.012, 0.018, 0.026, 0.038, 0.058, 0.080],
+    ])
+    
+    def calc_xt(xs, ys, xe, ye):
+        c_s, r_s = int(np.clip(xs / 10.0, 0, 11)), int(np.clip(ys / 10.0, 0, 7))
+        c_e, r_e = int(np.clip(xe / 10.0, 0, 11)), int(np.clip(ye / 10.0, 0, 7))
+        return max(0.0, XT_GRID[r_e, c_e] - XT_GRID[r_s, c_s])
+
+    df_pases_xt = df_eventos[
+        (df_eventos['type.name'] == 'Pass') &
+        (df_eventos['pass.outcome.name'].isna()) &
+        (df_eventos['player.name'].notna())
+    ].copy()
+    
+    df_pases_xt['xs'] = df_pases_xt['location'].apply(lambda l: l[0] if isinstance(l, list) else None)
+    df_pases_xt['ys'] = df_pases_xt['location'].apply(lambda l: l[1] if isinstance(l, list) else None)
+    df_pases_xt['xe'] = df_pases_xt['pass.end_location'].apply(lambda l: l[0] if isinstance(l, list) else None)
+    df_pases_xt['ye'] = df_pases_xt['pass.end_location'].apply(lambda l: l[1] if isinstance(l, list) else None)
+    df_pases_xt = df_pases_xt.dropna(subset=['xs', 'ys', 'xe', 'ye'])
+    
+    df_pases_xt['xT'] = df_pases_xt.apply(lambda r: calc_xt(r['xs'], r['ys'], r['xe'], r['ye']), axis=1)
+    
+    rk_xt = df_pases_xt.groupby(['player.name', 'team.name']).agg(
+        Pases=('xT', 'count'),
+        xT_Total=('xT', 'sum')
+    ).reset_index().sort_values(by='xT_Total', ascending=False)
+    
+    st.dataframe(rk_xt.rename(columns={'player.name': 'Jugador', 'team.name': 'Equipo'}).style.format({'xT_Total': '{:.3f}'}), use_container_width=True)
+
+# =========================================================
+# PESTAÑA 6: CLUSTERING Y SUSTITUTOS
+# =========================================================
+with tab_clusters:
+    st.subheader("Buscador de Sustitutos y Arquetipos (Machine Learning)")
+    try:
+        df_scout = pd.read_csv('fbref_premier_league.csv')
+    except Exception:
+        df_scout = pd.DataFrame()
+        
+    if df_scout.empty:
+        st.warning("Ejecuta 'python scraping_fbref.py' para contar con el dataset de la Premier League.")
+    else:
+        from sklearn.preprocessing import StandardScaler
+        from sklearn.metrics.pairwise import cosine_similarity
+        
+        cols_metricas = [c for c in df_scout.columns if '_p90' in c]
+        if cols_metricas:
+            X_scout = StandardScaler().fit_transform(df_scout[cols_metricas].fillna(0))
+            
+            jugador_buscar = st.selectbox("Seleccionar Jugador de Referencia:", sorted(df_scout['Jugador'].unique()))
+            
+            idx_obj = df_scout[df_scout['Jugador'] == jugador_buscar].index[0]
+            sims = cosine_similarity(X_scout[df_scout.index.get_loc(idx_obj)].reshape(1, -1), X_scout)[0]
+            
+            df_scout['Similitud Táctica %'] = (sims * 100).round(1)
+            sustitutos = df_scout[df_scout['Jugador'] != jugador_buscar].sort_values(by='Similitud Táctica %', ascending=False)
+            
+            st.write(f"Jugadores estadísticamente más parecidos a **{jugador_buscar}**:")
+            cols_mostrar = ['Jugador', 'Equipo', 'Rol', 'Similitud Táctica %'] + cols_metricas
+            st.dataframe(sustitutos[cols_mostrar].head(5), use_container_width=True)
